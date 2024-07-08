@@ -2,9 +2,11 @@ package main
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	// "github.com/aws/aws-cdk-go/awscdk/v2/awssqs"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigateway"
 )
 
 type GoAwsApiStackProps struct {
@@ -18,12 +20,52 @@ func NewGoAwsApiStack(scope constructs.Construct, id string, props *GoAwsApiStac
 	}
 	stack := awscdk.NewStack(scope, &id, &sprops)
 
-	// The code that defines your stack goes here
+	//DynamoDB Users table
+	usersTable := awsdynamodb.NewTable(stack, jsii.String("UsersTable"), &awsdynamodb.TableProps{
+		PartitionKey: &awsdynamodb.Attribute{
+			Name: jsii.String("username"),
+			Type: awsdynamodb.AttributeType_STRING,
+		},
+		TableName: jsii.String("Users"),
+		RemovalPolicy: awscdk.RemovalPolicy_DESTROY,
+	})
 
-	// example resource
-	// queue := awssqs.NewQueue(stack, jsii.String("GoAwsApiQueue"), &awssqs.QueueProps{
-	// 	VisibilityTimeout: awscdk.Duration_Seconds(jsii.Number(300)),
-	// })
+	myLambdaFunction := awslambda.NewFunction(stack, jsii.String("GoAwsApiLambda"), &awslambda.FunctionProps{
+		Runtime: awslambda.Runtime_PROVIDED_AL2023(),
+		Handler: jsii.String("main"),
+		Code: awslambda.AssetCode_FromAsset(jsii.String("lambda/function.zip"), nil),
+	})
+
+	api := awsapigateway.NewRestApi(stack, jsii.String("GoAwsApi"), &awsapigateway.RestApiProps{
+		DefaultCorsPreflightOptions: &awsapigateway.CorsOptions{
+			AllowHeaders: jsii.Strings("Contenty-Type", "Authorization"),
+			AllowMethods: jsii.Strings("GET", "POST", "DELETE", "PUT", "OPTIONS"),
+			AllowOrigins: jsii.Strings("*"),
+		},
+
+		DeployOptions: &awsapigateway.StageOptions{
+			LoggingLevel: awsapigateway.MethodLoggingLevel_INFO,
+			DataTraceEnabled: jsii.Bool(true),
+		},
+
+		EndpointConfiguration: &awsapigateway.EndpointConfiguration{
+			Types: &[]awsapigateway.EndpointType{awsapigateway.EndpointType_REGIONAL},
+		},
+		CloudWatchRole: jsii.Bool(true),
+	})
+
+	usersTable.GrantReadWriteData(myLambdaFunction)
+	integration := awsapigateway.NewLambdaIntegration(myLambdaFunction, nil)
+
+	//Defining routes
+	registerResource := api.Root().AddResource(jsii.String("register"), nil)
+	registerResource.AddMethod(jsii.String("POST"), integration, nil)
+	
+	loginResource := api.Root().AddResource(jsii.String("login"), nil)
+	loginResource.AddMethod(jsii.String("POST"), integration, nil)
+
+	protectedResource := api.Root().AddResource(jsii.String("protected"), nil)
+	protectedResource.AddMethod(jsii.String("GET"), integration, nil)
 
 	return stack
 }
